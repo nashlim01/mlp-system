@@ -1,0 +1,25 @@
+# Secrets
+.env
+
+# Runtime data
+raw/
+state/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Filled-in register workbooks (real tenant data); keep the blank template
+*.xlsx
+!templates/MLP_Register_Template.xlsx
+
+# Database dumps
+*.dump
+
+.DS_Store
+
+# Local tooling / original download
+.claude/
+*.zip
+files/

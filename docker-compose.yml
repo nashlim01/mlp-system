@@ -1,0 +1,22 @@
+services:
+  portal:
+    build: ./portal
+    env_file: .env
+    ports:
+      - "127.0.0.1:8501:8501"
+    restart: unless-stopped
+
+  worker:
+    build: ./worker
+    env_file: .env
+    volumes:
+      - ./raw:/app/raw
+      - ./state:/app/state
+    restart: unless-stopped
+
+  cloudflared:                       # deployment only
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    env_file: .env                   # reads TUNNEL_TOKEN
+    restart: unless-stopped
+    profiles: ["deploy"]
