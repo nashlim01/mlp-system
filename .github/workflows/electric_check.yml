@@ -1,0 +1,50 @@
+# Daily Sarawak Energy check for the alpha (portal on Streamlit Community Cloud, no worker).
+# Does nothing until the SEB_LOGIN_URL secret is set and the TODO selectors in
+# worker/jobs/electric.py are replaced. Results and failures land in job_runs as usual.
+#
+# Repo secrets (Settings → Secrets and variables → Actions):
+#   DATABASE_URL, SEB_LOGIN_URL, SEB_USERNAME, SEB_PASSWORD
+# Keep the repo PRIVATE before adding them: bill pages contain account details.
+name: electric_check
+
+on:
+  schedule:
+    - cron: "0 23 * * *"        # 07:00 Asia/Kuching (UTC+8)
+  workflow_dispatch: {}          # "Run workflow" button for a manual run
+
+jobs:
+  electric_check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: worker
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SEB_LOGIN_URL: ${{ secrets.SEB_LOGIN_URL }}
+      SEB_USERNAME: ${{ secrets.SEB_USERNAME }}
+      SEB_PASSWORD: ${{ secrets.SEB_PASSWORD }}
+      TZ: Asia/Kuching
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip until configured
+        id: cfg
+        working-directory: .
+        run: |
+          if [ -z "$SEB_LOGIN_URL" ] || [ -z "$DATABASE_URL" ]; then
+            echo "SEB_LOGIN_URL or DATABASE_URL secret not set: skipping."; echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.cfg.outputs.skip != 'true'
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: worker/requirements.txt
+      - name: Install
+        if: steps.cfg.outputs.skip != 'true'
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Run electric_check
+        if: steps.cfg.outputs.skip != 'true'
+        run: python scheduler.py --run electric_check

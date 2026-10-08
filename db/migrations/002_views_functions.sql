@@ -30,8 +30,11 @@ BEGIN
   RETURN n;
 END $$;
 
+-- Views use security_invoker so Supabase's public API (anon/authenticated) is still blocked
+-- by RLS on the underlying tables. The portal and worker connect as the owner: unaffected.
+
 -- Rent status is always computed, never stored
-CREATE OR REPLACE VIEW v_rent_status AS
+CREATE OR REPLACE VIEW v_rent_status WITH (security_invoker = true) AS
 SELECT rs.id                                   AS schedule_id,
        rs.period, rs.amount_due, rs.due_date, rs.note,
        t.id                                    AS tenancy_id,
@@ -63,7 +66,7 @@ LEFT JOIN (
   GROUP BY rent_schedule_id
 ) p ON p.rent_schedule_id = rs.id;
 
-CREATE OR REPLACE VIEW v_lease_expiry AS
+CREATE OR REPLACE VIEW v_lease_expiry WITH (security_invoker = true) AS
 SELECT t.id AS tenancy_id, u.code AS unit_code, u.assigned_staff_id,
        tn.name AS tenant_name, t.end_date, t.end_date - today_myt() AS days_left
 FROM tenancies t
@@ -72,7 +75,7 @@ JOIN tenants tn ON tn.id = t.tenant_id
 WHERE t.status = 'active' AND t.end_date IS NOT NULL
   AND t.end_date <= today_myt() + 60;
 
-CREATE OR REPLACE VIEW v_electric_latest AS
+CREATE OR REPLACE VIEW v_electric_latest WITH (security_invoker = true) AS
 SELECT DISTINCT ON (ua.id)
        ua.id AS utility_account_id, ua.account_no,
        u.code AS unit_code, u.assigned_staff_id,
@@ -83,10 +86,18 @@ LEFT JOIN bill_checks bc ON bc.utility_account_id = ua.id
 WHERE ua.type = 'electric'
 ORDER BY ua.id, bc.checked_at DESC NULLS LAST;
 
-CREATE OR REPLACE VIEW v_last_reminder AS
+CREATE OR REPLACE VIEW v_last_reminder WITH (security_invoker = true) AS
 SELECT DISTINCT ON (tenancy_id)
        tenancy_id,
        (created_at AT TIME ZONE 'Asia/Kuching') AS last_reminded_at,
        staff_id
 FROM reminder_log
 ORDER BY tenancy_id, created_at DESC;
+
+-- The public API must not call these either (only the portal, worker and SQL Editor)
+REVOKE EXECUTE ON FUNCTION generate_rent_schedule(date) FROM PUBLIC;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    REVOKE EXECUTE ON FUNCTION generate_rent_schedule(date) FROM anon, authenticated;
+  END IF;
+END $$;
