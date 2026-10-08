@@ -78,7 +78,7 @@ Fill in `.env` (see [Environment variables](#environment-variables)).
 2. Copy the **Session pooler** connection string (with `sslmode=require`) into `DATABASE_URL`.
 3. Copy the project URL and the `service_role` key into `.env`.
 4. Create a **private** Storage bucket named `receipts`.
-5. In the SQL Editor, run `db/migrations/001_core.sql`, then `002_views_functions.sql`, then `003_rls.sql`.
+5. In the SQL Editor, run the files in `db/migrations/` in number order (`001_core.sql` … `004_function_search_path.sql`).
 
 ### 3. Rebuild the register
 
