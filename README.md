@@ -14,10 +14,11 @@ Rental management system for **Miri Landmark Property Enterprise**.
 
 | Document (in `docs/`) | Use it for |
 |---|---|
+| **`MLP_Phase1_System_Guide.docx`** | **Start here.** The system as built: status, staff how-to, technical reference (v2.0) |
 | `MLP_Automation_Proposal.docx` | Scope, phases, decisions for the owner |
-| `MLP_Technical_Brief.docx` | Architecture, data model, modules |
-| `MLP_Prototype_Setup_Guide.docx` | Step-by-step build: full SQL, importer, portal and worker code |
 | `MLP_Budget_Plan.docx` | Costs and hosting options |
+| `MLP_Prototype_Setup_Guide.docx` | Original build guide v1.1 (history; the System Guide lists what changed since) |
+| `MLP_Technical_Brief.docx` | Early design, v0.3 (n8n-based; superseded for Phase 1) |
 | `MLP_WhatsApp_Bot_Local_Setup.docx` | **Phase 2 reference** (tenant WhatsApp, receipts, n8n) |
 
 ---
@@ -25,13 +26,15 @@ Rental management system for **Miri Landmark Property Enterprise**.
 ## Architecture
 
 ```
-Staff browser
-   │
-Cloudflare Access → Cloudflare Tunnel
-   │
-portal  (Streamlit)        ─┐
-worker  (APScheduler jobs) ─┴─► Supabase (Postgres + Storage)
-   └─► Sarawak Energy portal (Playwright, daily)
+ALPHA (now)                                   PRODUCTION (later)
+Staff browser                                 Staff browser
+  │ Streamlit viewer allowlist                  │ Cloudflare Access → Cloudflare Tunnel
+  ▼                                             ▼
+portal (Streamlit Community Cloud)            portal + worker (Docker on Singapore VPS)
+  │                                             │
+  └──► Supabase (Postgres + Storage, Singapore) ◄┘
+         ├─ pg_cron: rent lines
+         └─ ◄── GitHub Actions: electric_check (alpha; Playwright → Sarawak Energy)
 
 Staff PC: "💬 Open in WhatsApp" (wa.me link) ─► WhatsApp Web (company number) ─► tenant
 ```
@@ -46,8 +49,12 @@ Phase 1 does **not** include n8n, the WhatsApp Cloud API (automatic sending), AI
 mlp-system/
 ├─ docker-compose.yml
 ├─ .env.example
-├─ db/migrations/        001_core.sql  002_views_functions.sql  003_rls.sql
+├─ .github/workflows/    electric_check.yml   (daily electricity check for the alpha)
+├─ db/migrations/        001_core … 006_rent_cron   (run in number order)
+├─ db/demo_cleanup.sql   removes the DEMO- sample data
 ├─ portal/               app.py auth.py db.py storage.py messages.py bank.py views/ requirements.txt Dockerfile
+│                        views: today reminders rent_board record_payment tenancy register
+│                               utilities reports bank_matching admin account
 ├─ worker/               scheduler.py common.py jobs/{rent,electric}.py requirements.txt Dockerfile
 ├─ scripts/              import_register.py  set_password.py  make_template.py  requirements.txt
 ├─ templates/            MLP_Register_Template.xlsx   (rebuild with scripts/make_template.py)

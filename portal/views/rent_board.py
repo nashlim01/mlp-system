@@ -9,7 +9,8 @@ st.title("Rent Board")
 
 periods = query("SELECT DISTINCT period FROM rent_schedule ORDER BY period DESC")
 if periods.empty:
-    st.info("No rent lines yet. Generate them first (Section 4.4)."); st.stop()
+    st.info("No monthly rent yet. It appears automatically for active tenancies "
+            "(admins: Admin → Monthly rent)."); st.stop()
 months = periods["period"].tolist()
 this_month = dt.date.today().replace(day=1)                   # next month exists from the 25th
 period = st.selectbox("Month", months, index=months.index(this_month) if this_month in months else 0,

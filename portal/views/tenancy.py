@@ -49,14 +49,14 @@ st.write(f"**Status:** {t['status']} · **Period:** {t['start_date']:%d/%m/%Y} t
 if t["notes"]:
     st.caption(t["notes"])
 
-# ── Rent lines ───────────────────────────────────────────────────────────────
+# ── Monthly rent ───────────────────────────────────────────────────────────────
 st.subheader("Rent (last 12 months)")
 lines = query("""SELECT schedule_id, period, amount_due, paid, balance, due_date, status,
                         days_late, note
                  FROM v_rent_status WHERE tenancy_id = %s
                  ORDER BY period DESC LIMIT 12""", (tenancy_id,))
 if lines.empty:
-    st.info("No rent lines yet.")
+    st.info("No monthly rent prepared yet.")
 else:
     icons = {"PAID": "🟢", "PARTIAL": "🟠", "DUE": "🟡", "OVERDUE": "🔴"}
     show = lines.drop(columns="schedule_id").copy()
@@ -65,7 +65,7 @@ else:
     st.dataframe(show, hide_index=True, width="stretch")
 
     if can_edit:
-        with st.expander("Adjust a rent line (e.g. pro-rata first or last month)"):
+        with st.expander("Change a month's rent amount (e.g. pro-rata first or last month)"):
             rows = list(lines.itertuples())
             j = st.selectbox("Month", range(len(rows)), key="adj_month",
                              format_func=lambda j: f"{rows[j].period:%b %Y} (RM{rows[j].amount_due:,.2f})")
@@ -92,7 +92,7 @@ else:
                                       int(row.schedule_id), {"amount_due": row.amount_due},
                                       {"amount_due": new_amount, "reason": reason.strip()})
                         if n:
-                            st.success("Rent line updated."); st.rerun()
+                            st.success("Rent amount updated."); st.rerun()
                         else:
                             st.warning("Someone changed this line just now. Reload and try again.")
 

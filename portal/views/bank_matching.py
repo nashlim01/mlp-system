@@ -147,18 +147,18 @@ with match_tab:
                 choices = [(o[1], o[2]) for o in options] + [("other", None)]
                 names = {(o[1], o[2]): ("⭐ Suggested · " if o[0] and n_strong == 1 else "") + o[3]
                          for o in options}
-                names[("other", None)] = "Other rent line…" if options else "No exact match: pick a rent line…"
+                names[("other", None)] = "Another month's rent…" if options else "No exact match: choose the rent it pays…"
                 pick = st.selectbox("Match to", choices, key=f"pick{tx.id}", format_func=names.get,
                                     label_visibility="collapsed")
                 kind, target = pick
                 if kind == "other":
                     if lines.empty:
-                        st.caption("No unpaid rent lines.")
+                        st.caption("No unpaid rent.")
                         target = None
                     else:
                         recs = lines.to_dict("records")
-                        target = st.selectbox("Rent line", [r["schedule_id"] for r in recs], key=f"other{tx.id}",
-                                              index=None, placeholder="Choose a rent line (or Ignore)",
+                        target = st.selectbox("Rent it pays", [r["schedule_id"] for r in recs], key=f"other{tx.id}",
+                                              index=None, placeholder="Choose unit and month (or Ignore)",
                                               format_func=dict((r["schedule_id"], line_label(r)) for r in recs).get)
                         kind = "line"
                 c1, c2, c3 = st.columns([1, 1, 3])
@@ -258,7 +258,7 @@ with done_tab:
 with gaps_tab:
     periods = query("SELECT DISTINCT period FROM rent_schedule ORDER BY period DESC")
     if periods.empty:
-        st.info("No rent lines yet."); st.stop()
+        st.info("No monthly rent yet."); st.stop()
     period = st.selectbox("Month", periods["period"].tolist(), format_func=lambda d: f"{d:%B %Y}",
                           key="gap_month")
     c1, c2 = st.columns(2)

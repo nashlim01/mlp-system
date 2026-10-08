@@ -5,7 +5,7 @@ import streamlit as st
 
 from auth import MIN_PW, hash_password, password_problem
 from db import audit, pool, query
-from messages import fill, norm_phone
+from messages import norm_phone
 
 user = st.session_state.user
 if user["role"] != "admin":
@@ -13,14 +13,12 @@ if user["role"] != "admin":
 st.title("Admin")
 
 ROLES = ["admin", "staff", "viewer"]
-SAMPLE = dict(tenant_name="Ahmad", staff_name=user["name"], unit_code="SNDN-3418", period="October 2026",
-              balance="1,200.00", due_date="07/10/2026", amount="1,200.00", end_date="31/12/2026")
 
 requests = query("""SELECT id, name, email, phone, requested_at AT TIME ZONE 'Asia/Kuching' AS requested_at
                      FROM staff_requests WHERE status = 'pending' ORDER BY requested_at""")
-req_tab, staff_tab, tpl_tab, bank_tab, rent_tab, log_tab = st.tabs(
-    [f"Access requests ({len(requests)})", "Staff", "Message templates", "Landlord bank details",
-     "Rent lines", "Jobs & audit log"])
+req_tab, staff_tab, rent_tab, log_tab = st.tabs(
+    [f"Access requests ({len(requests)})", "Staff", "Monthly rent", "Jobs & audit log"])
+st.caption("Message templates and landlord details (including bank details) have their own pages in the menu.")
 
 # ── Access requests ──────────────────────────────────────────────────────────
 with req_tab:
@@ -143,90 +141,78 @@ with staff_tab:
                             audit(conn, user["id"], "reset_password", "staff", int(s["id"]))
                         st.success(f"Password reset for {s['name']}.")
 
-# ── Message templates ────────────────────────────────────────────────────────
-with tpl_tab:
-    tpls = query("SELECT code, name, body, active FROM message_templates ORDER BY code")
-    st.caption("Placeholders: {tenant_name} {staff_name} {unit_code} {period} {balance} {due_date} "
-               "{amount} {end_date}. Add language versions as new templates, e.g. rent_overdue_bm.")
-    codes = ["➕ New"] + tpls["code"].tolist()
-    code = st.selectbox("Template", codes, format_func=lambda c: c if c == "➕ New" else
-                        f"{c} · {tpls.set_index('code').loc[c, 'name']}")
-    t = tpls.set_index("code").loc[code].to_dict() if code != "➕ New" else None
-    with st.form(f"tpl_{code}"):
-        new_code = st.text_input("Code (letters, digits, _)", value="" if t is None else code,
-                                 disabled=t is not None)
-        name = st.text_input("Name", value=(t or {}).get("name", ""))
-        body = st.text_area("Message", value=(t or {}).get("body", ""), height=180)
-        active = st.checkbox("Active (shown in the Reminder Queue)", value=bool((t or {}).get("active", True)))
-        if st.form_submit_button("Save template"):
-            c = (new_code if t is None else code).strip().lower()
-            if not c.replace("_", "").isalnum() or not name.strip() or not body.strip():
-                st.error("Code (letters, digits, _), name and message are required.")
-            elif len(body) > 1000:
-                st.error("Keep messages under 1,000 characters so the WhatsApp link works.")
-            else:
-                try:
-                    with pool().connection() as conn, conn.transaction():
-                        if t is None:
-                            conn.execute("""INSERT INTO message_templates (code, name, body, active)
-                                            VALUES (%s, %s, %s, %s)""", (c, name.strip(), body, active))
-                        else:
-                            conn.execute("""UPDATE message_templates SET name = %s, body = %s, active = %s
-                                            WHERE code = %s""", (name.strip(), body, active, c))
-                        audit(conn, user["id"], "add_template" if t is None else "edit_template",
-                              "message_templates", None, t and {**t, "code": c},
-                              {"code": c, "name": name.strip(), "body": body, "active": active})
-                    st.success("Template saved."); st.rerun()
-                except psycopg.errors.UniqueViolation:
-                    st.error(f"Template code '{c}' already exists.")
-    if t:
-        st.markdown("**Preview with sample values**")
-        st.text(fill(t["body"], **SAMPLE))
-
-# ── Landlord bank details (admin only) ───────────────────────────────────────
-with bank_tab:
-    lls = query("""SELECT l.id, l.code, l.name, b.bank, b.account_name, b.account_no
-                   FROM landlords l LEFT JOIN landlord_bank b ON b.landlord_id = l.id ORDER BY l.code""")
-    if lls.empty:
-        st.info("No landlords yet.")
-    else:
-        lid = st.selectbox("Landlord", lls["id"].tolist(),
-                           format_func=dict(zip(lls["id"], lls["code"] + " · " + lls["name"])).get)
-        b = lls[lls["id"] == lid].iloc[0].to_dict()
-        with st.form(f"bank_{lid}"):
-            bank = st.text_input("Bank", value=b["bank"] or "")
-            acc_name = st.text_input("Account name", value=b["account_name"] or "")
-            acc_no = st.text_input("Account number", value=b["account_no"] or "")
-            if st.form_submit_button("Save bank details"):
-                mask = lambda v: f"…{v[-4:]}" if v else None      # audit keeps the last 4 digits only
-                with pool().connection() as conn, conn.transaction():
-                    conn.execute("""INSERT INTO landlord_bank (landlord_id, bank, account_name, account_no)
-                                    VALUES (%s, %s, %s, %s)
-                                    ON CONFLICT (landlord_id) DO UPDATE
-                                    SET bank = EXCLUDED.bank, account_name = EXCLUDED.account_name,
-                                        account_no = EXCLUDED.account_no""",
-                                 (int(lid), bank.strip() or None, acc_name.strip() or None,
-                                  acc_no.strip() or None))
-                    audit(conn, user["id"], "edit_landlord_bank", "landlord_bank", int(lid),
-                          {"bank": b["bank"], "account_no": mask(b["account_no"])},
-                          {"bank": bank.strip(), "account_no": mask(acc_no.strip())})
-                st.success("Saved."); st.rerun()
-
-# ── Rent lines ───────────────────────────────────────────────────────────────
+# ── Monthly rent ─────────────────────────────────────────────────────────────
 with rent_tab:
-    st.write("Create the rent lines for a month (one per active tenancy). Safe to run again: "
-             "existing lines are not touched. The worker does this automatically on the 25th and the 1st.")
+    st.info("**What is this?** Each month the system writes down the rent every active tenant owes for that "
+            "month. Today, the Reminder Queue, the Rent Board and Reports all work from it.\n\n"
+            "**It happens by itself:** next month's rent is prepared on the **25th at 8:00am**, and this month's "
+            "is checked **every night at 12:30am**. Use the button below only when you've just added a tenancy "
+            "and want its rent to show straight away. Pressing it twice never doubles anything.")
+    last = query("""SELECT finished_at AT TIME ZONE 'Asia/Kuching' AS at, status, rows_affected, job
+                    FROM job_runs WHERE job LIKE 'rent_schedule%%' ORDER BY started_at DESC LIMIT 1""")
+    if not last.empty:
+        r = last.iloc[0]
+        when = f"{r['at']:%d %b %Y, %I:%M %p}" if r["at"] is not None else "still running"
+        msg = (f"Last automatic run: {when} · {'OK' if r['status'] == 'ok' else r['status'].upper()} · "
+               f"{r['rows_affected'] or 0} added")
+        if r["status"] == "ok":
+            st.caption(msg)
+        else:
+            st.warning(msg)
+
     today = dt.date.today().replace(day=1)
-    months = [today] + [(today + dt.timedelta(days=32 * k)).replace(day=1) for k in (1, 2)] \
-        + [(today - dt.timedelta(days=1)).replace(day=1)]
-    month = st.selectbox("Month", months, format_func=lambda d: f"{d:%B %Y}")
-    if st.button("Generate rent lines"):
-        with pool().connection() as conn, conn.transaction():
-            n = conn.execute("SELECT generate_rent_schedule(%s) AS n", (month,)).fetchone()["n"]
-            audit(conn, user["id"], "generate_rent_schedule", "rent_schedule", None, None,
-                  {"period": month, "created": n})
-        st.success(f"{n} new rent line(s) created for {month:%B %Y}. Check lines flagged "
-                   "'check pro-rata' on the Rent Board.")
+    nxt = (today + dt.timedelta(days=32)).replace(day=1)
+    prv = (today - dt.timedelta(days=1)).replace(day=1)
+    labels = {today: f"This month ({today:%B %Y})", nxt: f"Next month ({nxt:%B %Y})",
+              prv: f"Last month ({prv:%B %Y})"}
+    month = st.radio("Month", list(labels), format_func=labels.get, horizontal=True)
+    month_end = (month + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
+    plan = query("""SELECT u.code AS unit, tn.name AS tenant, t.monthly_rent AS rent,
+                           GREATEST(make_date(%(y)s, %(m)s, t.due_day), t.start_date) AS due,
+                           t.start_date, t.end_date, t.status,
+                           rs.id IS NOT NULL AS prepared,
+                           (t.status = 'active' AND t.start_date <= %(e)s
+                            AND (t.end_date IS NULL OR t.end_date >= %(p)s)) AS covered
+                    FROM tenancies t
+                    JOIN units u ON u.id = t.unit_id
+                    JOIN tenants tn ON tn.id = t.tenant_id
+                    LEFT JOIN rent_schedule rs ON rs.tenancy_id = t.id AND rs.period = %(p)s
+                    WHERE t.status IN ('active', 'upcoming') OR rs.id IS NOT NULL
+                    ORDER BY u.code""", {"p": month, "e": month_end, "y": month.year, "m": month.month})
+    if plan.empty:
+        st.info("No tenancies yet. Start one in Register → Tenancies.")
+    else:
+        def state(r):
+            if r["prepared"]:
+                return "✅ Already prepared"
+            if r["covered"]:
+                return "➕ Will be added"
+            if r["status"] == "upcoming":
+                return "⏸ Upcoming tenancy (not active yet)"
+            return "⏸ Not this month (outside tenancy dates)"
+        plan["state"] = plan.apply(state, axis=1)
+        to_add = int((plan["state"] == "➕ Will be added").sum())
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Already prepared", int(plan["prepared"].sum()))
+        c2.metric("Will be added", to_add)
+        c3.metric("Rent to add", f"RM{plan.loc[plan['state'] == '➕ Will be added', 'rent'].astype(float).sum():,.2f}")
+        st.dataframe(plan[["state", "unit", "tenant", "rent", "due", "start_date", "end_date"]],
+                     hide_index=True, width="stretch", column_config={
+                         "state": "", "unit": "Unit", "tenant": "Tenant",
+                         "rent": st.column_config.NumberColumn("Monthly rent", format="RM %.2f"),
+                         "due": st.column_config.DateColumn(f"Due in {month:%B}", format="DD/MM/YYYY"),
+                         "start_date": st.column_config.DateColumn("Tenancy starts", format="DD/MM/YYYY"),
+                         "end_date": st.column_config.DateColumn("Tenancy ends", format="DD/MM/YYYY")})
+        if to_add == 0:
+            st.success(f"Everything is already prepared for {month:%B %Y}.")
+        elif st.button(f"Prepare {month:%B %Y} rent now ({to_add} to add)", type="primary"):
+            with pool().connection() as conn, conn.transaction():
+                n = conn.execute("SELECT generate_rent_schedule(%s) AS n", (month,)).fetchone()["n"]
+                audit(conn, user["id"], "generate_rent_schedule", "rent_schedule", None, None,
+                      {"period": month, "created": n})
+            st.success(f"Added {month:%B %Y} rent for {n} tenancy(ies). If a tenancy starts or ends mid-month, "
+                       "its amount is marked 'check pro-rata': adjust it on the Tenancy page.")
+            st.rerun()
 
 # ── Jobs & audit ─────────────────────────────────────────────────────────────
 with log_tab:

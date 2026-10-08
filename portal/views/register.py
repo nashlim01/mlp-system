@@ -65,8 +65,8 @@ def picker(label, df, fmt, key):
 landlords = query("SELECT id, code, name FROM landlords ORDER BY code")
 staff = query("SELECT id, name, email FROM staff WHERE active ORDER BY name")
 
-units_tab, tenants_tab, tenancies_tab, landlords_tab = st.tabs(
-    ["Units", "Tenants", "Tenancies", "Landlords"])
+units_tab, tenants_tab, tenancies_tab = st.tabs(["Units", "Tenants", "Tenancies"])
+st.caption("Landlords have their own page in the menu.")
 
 # ── Units ────────────────────────────────────────────────────────────────────
 with units_tab:
@@ -226,9 +226,9 @@ with tenancies_tab:
                                 after, None, after):
                             with pool().connection() as conn:
                                 sync_unit_status(conn, int(uid))
-                            st.success(f"Tenancy started for {u_names[uid]}. Rent lines for months already "
-                                       "generated are not added automatically: ask an admin to run "
-                                       "'Generate rent lines' on the Admin page.")
+                            st.success(f"Tenancy started for {u_names[uid]}. Its monthly rent appears "
+                                       "automatically by tomorrow morning (an admin can add it now under "
+                                       "Admin → Monthly rent).")
 
         live = tcs[tcs["status"].isin(["active", "upcoming"])] if not tcs.empty else tcs
         fmt = lambda r: f"{r['unit_code']} · {r['tenant_name']} · {r['status']} from {r['start_date']:%d/%m/%Y}"
@@ -253,8 +253,8 @@ with tenancies_tab:
                     dep_u = c2.number_input("Deposit, utility (RM)", min_value=0.0,
                                             value=float(t["deposit_utility"] or 0), step=50.0)
                     notes = st.text_area("Notes", value=t["notes"] or "")
-                    st.caption("Rent changes apply to rent lines generated from now on. "
-                               "Adjust existing lines on the Tenancy page.")
+                    st.caption("A new rent applies to months not prepared yet. To change a month that's "
+                               "already prepared, use the Tenancy page.")
                     if st.form_submit_button("Save changes"):
                         keys = ["monthly_rent", "due_day", "end_date", "status", "deposit_rental",
                                 "deposit_utility", "notes"]
@@ -287,8 +287,8 @@ with tenancies_tab:
                     end = st.date_input("Last day of tenancy", value=t["end_date"] or dt.date.today(),
                                         format="DD/MM/YYYY")
                     reason = st.text_input("Reason / note", placeholder="Moved out, deposit refunded")
-                    st.caption("Rent lines already created stay. Adjust the last month on the Tenancy page "
-                               "if it should be pro-rata.")
+                    st.caption("Months already prepared stay. If the last month should be pro-rata, "
+                               "adjust it on the Tenancy page.")
                     if st.form_submit_button("End tenancy", type="primary"):
                         if end < t["start_date"]:
                             st.error("End date is before the start date.")
@@ -302,42 +302,3 @@ with tenancies_tab:
                             with pool().connection() as conn:
                                 sync_unit_status(conn, int(t["unit_id"]))
                             st.success("Tenancy ended."); st.rerun()
-
-
-# ── Landlords ────────────────────────────────────────────────────────────────
-with landlords_tab:
-    lls = query("SELECT id, code, name, phone, email, management_fee_pct, notes FROM landlords ORDER BY code")
-    if not lls.empty:
-        st.dataframe(lls.drop(columns="id"), hide_index=True, width="stretch")
-    st.caption("Bank details are entered by an admin on the Admin page.")
-    if can_edit:
-        st.markdown("##### Add or edit a landlord")
-        ll = picker("Landlord", lls, lambda r: f"{r['code']} · {r['name']}", "ll_pick")
-        with st.form(f"landlord_{ll['id'] if ll else 'new'}"):
-            code = st.text_input("Landlord code", value=ll["code"] if ll else "", disabled=ll is not None)
-            name = st.text_input("Name *", value=(ll or {}).get("name") or "")
-            phone = st.text_input("Phone", value=(ll or {}).get("phone") or "")
-            email = st.text_input("Email", value=(ll or {}).get("email") or "")
-            fee = st.number_input("Management fee %", min_value=0.0, max_value=100.0, step=0.5,
-                                  value=float((ll or {}).get("management_fee_pct") or 10))
-            notes = st.text_area("Notes", value=(ll or {}).get("notes") or "")
-            if st.form_submit_button("Save landlord"):
-                after = {"code": code.strip().upper(), "name": name.strip(), "phone": norm_phone(phone),
-                         "email": opt(email), "management_fee_pct": fee, "notes": opt(notes)}
-                if not after["code"] or not after["name"]:
-                    st.error("Code and name are required.")
-                elif ll is None:
-                    if save("add_landlord", "landlords", """
-                            INSERT INTO landlords (code, name, phone, email, management_fee_pct, notes)
-                            VALUES (%(code)s, %(name)s, %(phone)s, %(email)s, %(management_fee_pct)s,
-                                    %(notes)s) RETURNING id""", after, None, after):
-                        st.success(f"Added {after['code']}."); st.rerun()
-                else:
-                    after.pop("code")
-                    before = {k: ll[k] for k in after}
-                    if save("edit_landlord", "landlords", """
-                            UPDATE landlords SET name = %(name)s, phone = %(phone)s, email = %(email)s,
-                                management_fee_pct = %(management_fee_pct)s, notes = %(notes)s
-                            WHERE id = %(id)s RETURNING id""", {**after, "id": int(ll["id"])},
-                            before, after):
-                        st.success("Landlord saved."); st.rerun()
