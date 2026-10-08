@@ -1,6 +1,7 @@
 import streamlit as st
 
 from auth import require_login
+from db import execute
 
 st.set_page_config(page_title="MLP Staff Portal", page_icon="🏠", layout="wide")
 user = require_login()
@@ -18,9 +19,14 @@ pages = [
 if user["role"] == "admin":
     pages += [st.Page("views/bank_matching.py", title="Bank Matching", icon="🏦"),
               st.Page("views/admin.py", title="Admin", icon="⚙️")]
+pages.append(st.Page("views/account.py", title="My account", icon="👤"))
 
 with st.sidebar:
     st.write(f"Signed in as **{user['name']}** ({user['role']})")
+    if user["role"] == "admin":
+        n = execute("SELECT count(*) AS n FROM staff_requests WHERE status = 'pending'")["n"]
+        if n:
+            st.warning(f"🔔 {n} access request(s) waiting: Admin → Access requests")
     if st.button("Log out"):
         st.session_state.clear()
         st.rerun()

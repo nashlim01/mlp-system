@@ -12,6 +12,19 @@ from psycopg_pool import ConnectionPool
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")   # no-op inside Docker
 
 
+def _load_streamlit_secrets():
+    """On Streamlit Community Cloud the settings come from the app's Secrets box (TOML), not .env."""
+    try:
+        for key, value in st.secrets.items():
+            if isinstance(value, str):
+                os.environ.setdefault(key, value)
+    except Exception:                       # no secrets.toml (local / Docker): .env is used
+        pass
+
+
+_load_streamlit_secrets()
+
+
 @st.cache_resource
 def pool() -> ConnectionPool:
     return ConnectionPool(

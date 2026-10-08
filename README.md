@@ -78,7 +78,7 @@ Fill in `.env` (see [Environment variables](#environment-variables)).
 2. Copy the **Session pooler** connection string (with `sslmode=require`) into `DATABASE_URL`.
 3. Copy the project URL and the `service_role` key into `.env`.
 4. Create a **private** Storage bucket named `receipts`.
-5. In the SQL Editor, run the files in `db/migrations/` in number order (`001_core.sql` … `004_function_search_path.sql`).
+5. In the SQL Editor, run the files in `db/migrations/` in number order (`001_core.sql` … `006_rent_cron.sql`).
 
 ### 3. Rebuild the register
 
@@ -95,7 +95,7 @@ python -m venv .venv && source .venv/bin/activate          # Windows: .venv\Scri
 pip install -r scripts/requirements.txt
 python scripts/import_register.py MLP_Register.xlsx           # validate: lists problems by sheet/row
 python scripts/import_register.py MLP_Register.xlsx --commit  # save (safe to re-run)
-python scripts/set_password.py                                # once per staff member
+python scripts/set_password.py                                # first admin only; others use the portal
 ```
 
 Create this month's and next month's rent lines in the SQL Editor:
@@ -141,6 +141,43 @@ Available jobs are `rent_next_month`, `rent_this_month` and `electric_check`.
    ```bash
    cd worker && python -m jobs.electric raw/electric/<date>
    ```
+
+---
+
+## Alpha hosting: Streamlit Community Cloud
+
+For the alpha the portal runs on [Streamlit Community Cloud](https://share.streamlit.io) (free, redeploys
+on every push to `main`). The VPS + Cloudflare setup below is the later production step; nothing in
+the repo has to change for it.
+
+1. Sign in to share.streamlit.io with GitHub and click **Create app → Deploy a public app from GitHub**.
+2. Repository `nashlim01/mlp-system`, branch `main`, main file path `portal/app.py`.
+3. **Advanced settings:** Python 3.12, and paste the secrets (same values as `.env`):
+   ```toml
+   DATABASE_URL = "postgresql://postgres.<ref>:<db-password>@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require"
+   SUPABASE_URL = "https://<ref>.supabase.co"
+   SUPABASE_SERVICE_KEY = "sb_secret_..."
+   ```
+4. After the first deploy: app **Settings → Sharing → Only specific people can view this app**, and
+   add each staff email. This is the outer gate that Cloudflare Access gives on the VPS.
+
+What runs where in the alpha (there is no worker container):
+
+| Job | Runs in |
+|---|---|
+| Rent lines (`rent_next_month`, `rent_this_month`) | Supabase `pg_cron` (migration 006); this month's lines are checked daily at 00:30 |
+| `electric_check` | GitHub Actions, `.github/workflows/electric_check.yml`, daily 07:00; skipped until its secrets are set |
+
+Limits to know: the app sleeps after a period without visitors (about 30 s to wake), servers are in
+the US (pages are slower than from Singapore), and the address is `<name>.streamlit.app`.
+
+### Staff accounts
+
+- New staff use **Request access** on the login page; an admin approves (choosing the role) or rejects
+  it under **Admin → Access requests**. On Streamlit Cloud, also add their email to the viewer list.
+- Everyone changes their own password under **My account**.
+- Admins can create accounts directly (with an initial password) and **reset** a forgotten password
+  under **Admin → Staff**. `scripts/set_password.py` still works for the very first admin.
 
 ---
 
