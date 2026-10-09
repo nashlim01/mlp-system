@@ -180,7 +180,7 @@ with rent_tab:
                     WHERE t.status IN ('active', 'upcoming') OR rs.id IS NOT NULL
                     ORDER BY u.code""", {"p": month, "e": month_end, "y": month.year, "m": month.month})
     if plan.empty:
-        st.info("No tenancies yet. Start one in Register → Tenancies.")
+        st.info("No tenancies yet. Start one in Register.")
     else:
         def state(r):
             if r["prepared"]:

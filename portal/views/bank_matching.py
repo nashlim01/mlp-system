@@ -7,11 +7,23 @@ import datetime as dt
 import psycopg
 import streamlit as st
 
-from bank import BANK_FORMATS, CUSTOM, load_statement, read_csv, row_hash, strong
+import receipts_core as rc
+from bank import BANK_FORMATS, CUSTOM, load_statement, read_csv, strong
 from db import audit, pool, query
 
 user = st.session_state.user
 st.title("Bank Matching")
+
+def recheck_slips():
+    """New bank credits may complete slips waiting for review, or pay rent under a tenant's name (no slip)."""
+    with pool().connection() as conn:
+        c = rc.rematch_pending(conn, user["id"])
+        n = rc.auto_from_bank(conn, user["id"])
+    if c.get("matched"):
+        st.success(f"🧾 {c['matched']} waiting slip(s) now matched and recorded automatically.")
+    if n:
+        st.success(f"🏦 {n} payment(s) under a tenant's name recorded automatically (no slip needed).")
+
 
 def show(df):
     if df.empty:
@@ -24,6 +36,8 @@ upload_tab, match_tab, done_tab, gaps_tab = st.tabs(["Upload", "Match", "Matched
 
 # ── Upload ───────────────────────────────────────────────────────────────────
 with upload_tab:
+    st.caption("Screenshots of the bank app: use the 🏦 bank statement bar at the top of the Rent Board (it never "
+               "reads the same file twice). Here: CSV statements, including new bank formats.")
     choice = st.selectbox("Bank format", list(BANK_FORMATS) + [CUSTOM])
     file = st.file_uploader("Bank statement (CSV)", type=["csv"])
     fmt, label = None, choice
@@ -69,27 +83,25 @@ with upload_tab:
         if stmt is None:
             pass
         elif stmt.empty:
-            st.warning("No credit rows found. Check the mapping.")
+            st.warning("No incoming payments found. Check the mapping.")
         else:
-            st.write(f"**{len(stmt)} credit(s)**, {stmt['txn_date'].min():%d/%m/%Y} to "
+            st.write(f"**{len(stmt)} incoming payment(s)**, {stmt['txn_date'].min():%d/%m/%Y} to "
                      f"{stmt['txn_date'].max():%d/%m/%Y}, total RM{stmt['amount'].sum():,.2f}")
             st.dataframe(stmt, hide_index=True, width="stretch", height=250)
-            if st.button("Import credits", type="primary"):
-                batch = f"{file.name} @ {dt.datetime.now():%Y-%m-%d %H:%M}"
-                added = 0
-                with pool().connection() as conn, conn.transaction():
-                    for r in stmt.itertuples():
-                        added += conn.execute("""
-                            INSERT INTO bank_transactions (account_label, txn_date, description,
-                                reference, amount, import_batch, row_hash)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (row_hash) DO NOTHING""",
-                            (label.strip(), r.txn_date, r.description, r.reference or None,
-                             float(r.amount), batch, row_hash(label.strip(), r))).rowcount
-                    audit(conn, user["id"], "bank_upload", "bank_transactions", None, None,
-                          {"file": file.name, "label": label.strip(), "rows": len(stmt), "added": added})
-                st.success(f"Imported {added} new transaction(s); {len(stmt) - added} were already "
-                           "uploaded before and were skipped.")
+            digest = rc.file_hash(file.getvalue())
+            with pool().connection() as conn:
+                prev = rc.find_upload(conn, digest)
+            if prev and prev["added_at"]:
+                st.info(f"This exact file was already uploaded on {prev['uploaded_at']:%d %b %Y %H:%M}: "
+                        f"{prev['added'] or 0} new of {prev['total'] or 0} saved then.")
+            elif st.button(f"Save {len(stmt)} incoming payment(s)", type="primary"):
+                rows = stmt.to_dict("records")
+                with pool().connection() as conn:
+                    uid = rc.start_upload(conn, digest, file.name, "csv", label.strip(), user["id"])
+                    added = rc.import_bank_credits(conn, rows, label.strip(), user["id"], "csv",
+                                                   f"{file.name} @ {dt.datetime.now():%Y-%m-%d %H:%M}", uid)
+                st.success(f"Saved {added} new incoming payment(s); {len(rows) - added} were already saved.")
+                recheck_slips()
 
 # ── Match ────────────────────────────────────────────────────────────────────
 with match_tab:

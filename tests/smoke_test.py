@@ -147,8 +147,14 @@ def main():
         check(r["status"] == "PARTIAL" and r["balance"] == 450, "8. partial payment → PARTIAL, balance 450")
         c.execute("UPDATE rent_schedule SET due_date = %s WHERE id = %s",
                   (TODAY - dt.timedelta(days=4), s["schedule_id"]))
+        r = c.execute("SELECT status, days_late, grace_end FROM v_rent_status WHERE schedule_id = %s",
+                      (s["schedule_id"],)).fetchone()
+        check(r["status"] == "GRACE" and r["days_late"] == 4 and r["grace_end"] == TODAY + dt.timedelta(days=3),
+              "8. 4 days past due → in the 7-day grace period")
+        c.execute("UPDATE rent_schedule SET due_date = %s WHERE id = %s",
+                  (TODAY - dt.timedelta(days=8), s["schedule_id"]))
         r = c.execute("SELECT status, days_late FROM v_rent_status WHERE schedule_id = %s", (s["schedule_id"],)).fetchone()
-        check(r["status"] == "OVERDUE" and r["days_late"] == 4, "8. past due → OVERDUE, 4 days late")
+        check(r["status"] == "OVERDUE" and r["days_late"] == 8, "8. after the grace period → OVERDUE, 8 days late")
         pid = c.execute("INSERT INTO payments (tenancy_id, rent_schedule_id, amount, paid_date) "
                         "VALUES (%s, %s, 450, %s) RETURNING id",
                         (s["tenancy_id"], s["schedule_id"], TODAY)).fetchone()["id"]
@@ -199,19 +205,20 @@ def main():
     r = one("SELECT status, rows_affected FROM job_runs ORDER BY id DESC LIMIT 1")
     check(r["status"] == "ok" and r["rows_affected"] == 0, "rent_this_month job logged ok (0 new lines)")
 
-    def fake_fetch(accounts, day_dir):
+    def fake_fetch(day_dir, **kw):                  # SEBCares JSON as the bill page receives it
+        import json
         day_dir.mkdir(parents=True, exist_ok=True)
-        (day_dir / "220012345678.html").write_text("<p id=a>RM 85.20</p><p id=o>85.20</p><p id=d>20/10/2026</p>")
-        (day_dir / "220099999999.html").write_text("<html>Session expired</html>")
+        bill = {"ContractSubscription": {"Id": "1", "ContractId": "220012345678", "Nickname": "SNDN"},
+                "CustomerInformations": {
+                    "T_ACCOUNT_BALANCES": {"item": {"List": [{"TEXT": "Open", "WITHD_VAL": "85.2000"}]}},
+                    "T_INVOICE_LIST": {"item": {"List": [{"PRINT_DOC": "7360001", "INVOICE_DATE": "2026-09-29",
+                                                          "DUE_DATE": "2026-10-20", "CURR_AMT": "     85.20",
+                                                          "CURR_TOTAL_AMT": "     85.20"}]}}}}
+        (day_dir / "220012345678.json").write_text(json.dumps(bill))
+        return [], ["220099999999: bill data did not load"]
 
-    def fake_parse(html):
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(html, "html.parser")
-        return (electric._money(soup.select_one("#a").get_text()), electric._money(soup.select_one("#o").get_text()),
-                dt.datetime.strptime(soup.select_one("#d").get_text(), "%d/%m/%Y").date())
-
-    electric.fetch, electric.parse = fake_fetch, fake_parse
-    os.environ["SEB_LOGIN_URL"] = "https://example.invalid"
+    electric.fetch = fake_fetch
+    os.environ["SEB_USERNAME"] = "test@example.invalid"
     electric.run()
     r = one("SELECT status, rows_affected, error FROM job_runs WHERE job = 'electric_check' ORDER BY id DESC LIMIT 1")
     saved = one("SELECT count(*) AS n FROM bill_checks")["n"]
@@ -219,6 +226,8 @@ def main():
     check(r["status"] == "failed" and "220099999999" in r["error"], "15. failure + account listed in job_runs")
     check(float(one("SELECT outstanding FROM v_electric_latest WHERE unit_code = 'SNDN-3418'")["outstanding"]) == 85.20,
           "v_electric_latest shows the parsed bill")
+    check(one("SELECT due_date FROM utility_bills WHERE bill_no = '7360001'")["due_date"] == dt.date(2026, 10, 20),
+          "SEB bill kept in utility_bills")
 
     print(f"\nAll {passed} checks passed.")
 
