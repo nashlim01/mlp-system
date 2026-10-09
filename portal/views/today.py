@@ -18,7 +18,8 @@ def show(title, df, empty_msg):
         st.dataframe(df, hide_index=True, width="stretch")
 
 
-show("🔴 Overdue rent", query(f"""
+st.caption("🔴 = grace period over: no more WhatsApp reminders. Settle with the tenant in person.")
+show("🔴 Overdue rent (grace period over)", query(f"""
     SELECT r.unit_code, r.tenant_name, r.period, r.balance, r.days_late,
            lr.last_reminded_at, r.staff_name
     FROM v_rent_status r
@@ -27,10 +28,14 @@ show("🔴 Overdue rent", query(f"""
     ORDER BY r.days_late DESC""", p), "Nothing overdue.")
 st.page_link("views/reminders.py", label="Send WhatsApp reminders →", icon="💬")
 
-show("🟡 Due within 3 days", query(f"""
-    SELECT unit_code, tenant_name, period, balance, due_date
+slips = execute("SELECT count(*) AS n FROM receipts WHERE status = 'review'")
+if slips and slips["n"]:
+    st.page_link("views/receipts.py", label=f"🧾 {slips['n']} transfer slip(s) need review →")
+
+show("🟡 Due within 3 days, or in the grace period", query(f"""
+    SELECT unit_code, tenant_name, period, balance, due_date, grace_end
     FROM v_rent_status
-    WHERE status IN ('DUE', 'PARTIAL') AND due_date <= today_myt() + 3 {f}
+    WHERE status IN ('DUE', 'PARTIAL', 'GRACE') AND due_date <= today_myt() + 3 {f}
     ORDER BY due_date""", p), "Nothing due in the next 3 days.")
 
 st.subheader("📝 Follow-ups due")

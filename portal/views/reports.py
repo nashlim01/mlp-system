@@ -8,11 +8,12 @@ import streamlit as st
 from db import query
 
 st.title("Reports")
-st.caption("Rent expected vs collected, from the monthly rent each active tenancy owes. "
+st.caption("Expected vs collected per month: rent plus the electricity and water bills added to it. "
            "Use the filters to narrow it down; everything below and the Excel download follow them.")
 
 COLLECTED, OUTSTANDING, EXPECTED = "#2a78d6", "#eb6834", "#8a8a8a"   # validated pair (dataviz palette)
-ICONS = {"PAID": "🟢 Paid", "PARTIAL": "🟠 Partly paid", "DUE": "🟡 Due", "OVERDUE": "🔴 Overdue"}
+ICONS = {"PAID": "🟢 Paid", "PARTIAL": "🟠 Partly paid", "DUE": "🟡 Due", "GRACE": "⏳ In grace",
+         "OVERDUE": "🔴 Overdue"}
 money = lambda label: st.column_config.NumberColumn(label, format="RM %.2f")
 
 periods = query("SELECT DISTINCT period FROM rent_schedule ORDER BY period DESC")
@@ -27,14 +28,17 @@ period = c1.selectbox("Month", months, index=months.index(this_month) if this_mo
                       format_func=lambda d: f"{d:%B %Y}")
 raw = query("""SELECT r.schedule_id, r.period, r.unit_code, r.area, r.tenant_name, r.tenant_phone,
                       r.staff_name, COALESCE(l.code || ' · ' || l.name, 'No landlord') AS landlord,
-                      r.amount_due, r.paid, r.balance, r.due_date, r.status, r.days_late, r.note,
+                      r.amount_due, r.electric_due, r.water_due, r.total_due, r.paid, r.balance, r.due_date,
+                      r.status, r.days_late, r.note,
                       lr.last_reminded_at
                FROM v_rent_status r
                LEFT JOIN landlords l ON l.id = r.landlord_id
                LEFT JOIN v_last_reminder lr ON lr.tenancy_id = r.tenancy_id
                WHERE r.period BETWEEN (%s::date - INTERVAL '5 months')::date AND %s""", (period, period))
-for col in ("amount_due", "paid", "balance"):
+for col in ("amount_due", "electric_due", "water_due", "total_due", "paid", "balance"):
     raw[col] = raw[col].astype(float)
+raw["rent"] = raw["amount_due"]
+raw["amount_due"] = raw["total_due"]                              # expected = rent + utilities from here on
 raw["collected"] = raw[["paid", "amount_due"]].min(axis=1)        # overpayments don't inflate totals
 raw["outstanding"] = raw["balance"].clip(lower=0)
 raw["area"] = raw["area"].fillna("—")
@@ -144,14 +148,16 @@ with overview:
     })
 
 # ── Unit details ─────────────────────────────────────────────────────────────
-DETAIL_COLS = ["unit_code", "tenant_name", "area", "landlord", "staff_name", "amount_due", "paid",
+DETAIL_COLS = ["unit_code", "tenant_name", "area", "landlord", "staff_name", "rent", "electric_due", "water_due",
+               "amount_due", "paid",
                "outstanding", "due_date", "status", "days_late", "note"]
 detail = month_df.sort_values(["status", "unit_code"])[DETAIL_COLS].copy()
 detail["status"] = detail["status"].map(ICONS)
 with units_tab:
     st.dataframe(detail, hide_index=True, width="stretch", column_config={
         "unit_code": "Unit", "tenant_name": "Tenant", "area": "Area", "landlord": "Landlord",
-        "staff_name": "Staff", "amount_due": money("Rent"),
+        "staff_name": "Staff", "rent": money("Rent"), "electric_due": money("Electricity"),
+        "water_due": money("Water"), "amount_due": money("Total"),
         "paid": money("Paid"),
         "outstanding": money("Outstanding"),
         "due_date": st.column_config.DateColumn("Due", format="DD/MM/YYYY"), "status": "Status",

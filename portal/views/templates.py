@@ -14,11 +14,15 @@ st.caption("The WhatsApp messages offered in the Reminder Queue and after record
 
 PLACEHOLDERS = {
     "{tenant_name}": "Tenant's name", "{staff_name}": "Your name", "{unit_code}": "Unit, e.g. 2273 SENADIN",
-    "{period}": "Rent month, e.g. October 2026", "{balance}": "Amount still owed", "{due_date}": "Due date",
+    "{period}": "Rent month, e.g. October 2026", "{balance}": "Amount still owed (rent + utilities)", "{due_date}": "Due date",
     "{amount}": "Amount just paid (thank-you)", "{end_date}": "Tenancy end date (tenancy ending)",
+    "{grace_end}": "Last day of the grace period", "{paid}": "Paid so far for that month",
+    "{breakdown}": "What the total is made of, e.g. rent RM850.00 + electricity RM61.95 + water RM20.00",
 }
 SAMPLE = dict(tenant_name="Sumerni", staff_name=user["name"], unit_code="2273 SENADIN", period="October 2026",
-              balance="850.00", due_date="15/10/2026", amount="850.00", end_date="14/03/2027")
+              balance="931.95", due_date="15/10/2026", amount="850.00", end_date="14/03/2027",
+              grace_end="22/10/2026", paid="100.00",
+              breakdown="rent RM850.00 + electricity RM61.95 + water RM20.00")
 
 tpls = query("SELECT code, name, body, active FROM message_templates ORDER BY active DESC, code")
 st.dataframe(tpls[["name", "code", "active"]], hide_index=True, width="stretch",

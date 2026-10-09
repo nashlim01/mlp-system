@@ -3,7 +3,7 @@ import datetime as dt
 import streamlit as st
 
 from db import audit, execute, pool, query
-from storage import receipt_link
+from storage import receipt_bytes, receipt_link
 
 user = st.session_state.user
 can_edit = user["role"] != "viewer"
@@ -15,7 +15,7 @@ units = query(f"""SELECT u.id, u.code, u.address, u.status, COALESCE(s.name, 'Un
                   FROM units u LEFT JOIN staff s ON s.id = u.assigned_staff_id
                   {f} ORDER BY u.code""", {"sid": user["id"]})
 if units.empty:
-    st.info("No units yet. Import the register or add units in Register."); st.stop()
+    st.info("No units yet. Import the register or add units on the Units page."); st.stop()
 labels = [f"{r.code} · {r.address}" for r in units.itertuples()]
 i = st.selectbox("Unit", range(len(labels)), format_func=lambda k: labels[k])
 unit = units.iloc[i]
@@ -50,19 +50,20 @@ if t["notes"]:
     st.caption(t["notes"])
 
 # ── Monthly rent ───────────────────────────────────────────────────────────────
-st.subheader("Rent (last 12 months)")
-lines = query("""SELECT schedule_id, period, amount_due, paid, balance, due_date, status,
-                        days_late, note
+st.subheader("Rent and utilities (last 12 months)")
+lines = query("""SELECT schedule_id, period, amount_due, electric_due, water_due, total_due, paid, balance,
+                        due_date, status, days_late, note
                  FROM v_rent_status WHERE tenancy_id = %s
                  ORDER BY period DESC LIMIT 12""", (tenancy_id,))
 if lines.empty:
     st.info("No monthly rent prepared yet.")
 else:
-    icons = {"PAID": "🟢", "PARTIAL": "🟠", "DUE": "🟡", "OVERDUE": "🔴"}
+    icons = {"PAID": "🟢", "PARTIAL": "🟠", "DUE": "🟡", "GRACE": "⏳", "OVERDUE": "🔴"}
     show = lines.drop(columns="schedule_id").copy()
     show["period"] = show["period"].map(lambda d: f"{d:%b %Y}")
     show["status"] = show["status"].map(lambda s: f"{icons[s]} {s}")
-    st.dataframe(show, hide_index=True, width="stretch")
+    st.dataframe(show, hide_index=True, width="stretch", column_config={
+        "amount_due": "Rent", "electric_due": "Electricity", "water_due": "Water", "total_due": "Total"})
 
     if can_edit:
         with st.expander("Change a month's rent amount (e.g. pro-rata first or last month)"):
@@ -120,8 +121,14 @@ for p in pays.itertuples():
         c1.write(label)
     if p.receipt_path and c2.button("Receipt", key=f"rc{p.id}"):
         try:
-            st.link_button(f"Open receipt for {month} (link valid 5 minutes)",
-                           receipt_link(p.receipt_path))
+            link = receipt_link(p.receipt_path)
+            if link:
+                st.link_button(f"Open receipt for {month} (link valid 5 minutes)", link)
+            elif p.receipt_path.lower().endswith(".pdf"):  # local demo storage
+                st.download_button(f"Download receipt for {month}", receipt_bytes(p.receipt_path),
+                                   file_name=p.receipt_path.rsplit("/", 1)[-1], key=f"rcd{p.id}")
+            else:
+                st.image(receipt_bytes(p.receipt_path), caption=f"Receipt for {month}", width=320)
         except Exception as e:                       # storage not configured / file missing
             st.error(f"Could not open the receipt: {e}")
 

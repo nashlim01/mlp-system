@@ -6,3 +6,5 @@ openpyxl>=3.1
 bcrypt>=4.1
 supabase>=2.5
 python-dotenv>=1.0
+anthropic>=1.12
+pydantic>=2.7
